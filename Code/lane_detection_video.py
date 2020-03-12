@@ -1,115 +1,143 @@
 import cv2
+import copy
 import numpy as np
+from sys import argv
+from utils import constants
 
+script, video_location, output_destination = argv
 
-def find_roi(img):
-    """
-    Find a region of interest within an image
-    :param img: opencv image to find the ROI
-    :return: image with ROI highlighted
-    """
-    # Define a mask of the same size as the image
-    mask = np.zeros_like(img)
-    # Get vertices for the region of interest
-    shape = img.shape
-    lower_left = [0, shape[0] - 20]
-    lower_right = [shape[1], shape[0] - 20]
-    top_left = [0, shape[0] / 2 + 20]
-    top_right = [shape[1], shape[0] / 2 + 20]
-    vertices = [np.array([lower_left, top_left, top_right, lower_right], dtype=np.int32)]
-    # print(vertices)
-    # Define mask color based on number of channels in the image
-    if len(shape) > 2:
-        mask_color = (255,) * shape[2]
-    else:
-        mask_color = 255
+cap = cv2.VideoCapture(str(video_location))  # Reading the video file
+video_format = cv2.VideoWriter_fourcc('M', 'P', '4', 'V')
+video_output = cv2.VideoWriter(str(output_destination), video_format, 30.0, (1200, 617))
 
-    # Fill pixels inside the polygon defined by vertices
-    cv2.fillPoly(mask, vertices, mask_color)
+temp_x_yellow = []
+temp_y_yellow = []
+temp_x_white = []
+temp_y_white = []
 
-    # Return an image where only mask pixels are non-zero
-    return cv2.bitwise_and(img, mask)
+while True:
+    ret, video_frame = cap.read()
+    # If no video frame is generated or the video has ended
+    if not ret:
+        break
+    constants.total_frames += 1
+    # Get height and width of the video frame
+    h, w = video_frame.shape[:2]
+    # Get optimal camera calibration parameters to undistort
+    new_camera_matrix, roi = cv2.getOptimalNewCameraMatrix(constants.data2_camera_matrix,
+                                                           constants.data2_distortion_matrix,
+                                                           (w, h), 1, (w, h))
+    # Undistort the image
+    undistorted_img = cv2.undistort(video_frame, constants.data2_camera_matrix, constants.data2_distortion_matrix, None,
+                                    new_camera_matrix)
+    # Remove curved parts gained after undistortion
+    x, y, w, h = roi
+    undistort = undistorted_img[y:y + h, x:x + w]
+    undistort_copy = undistort.copy()
+    undistort = cv2.fastNlMeansDenoisingColored(undistort, None, 10, 10, 7, 21)
+    # Four corners points in the camera frame for homography
+    section_points = np.float32([[int((w / 2) - 80), int((h / 2) + 100)],
+                                 [int((w / 2) + 120), int((h / 2) + 100)],
+                                 [int(w - 90), int(h - 30)],
+                                 [80, h]])
+    # Homography matrix using the above four points in camera frame and world frame.
+    H = cv2.getPerspectiveTransform(section_points, constants.warp_points)
+    Hinv = np.linalg.inv(H)  # Getting Inverse of the homography matrix
+    homo_image = cv2.warpPerspective(undistort, H, (constants.warp_size[0], constants.warp_size[1]))
+    # Make a copy of the image recieved through homography
+    homo_image_copy = copy.deepcopy(homo_image)
+    cv2.multiply(homo_image_copy, constants.array_alpha, homo_image)
+    cv2.add(homo_image_copy, constants.array_beta, homo_image_copy)
+    cv2.multiply(homo_image_copy, constants.array_alpha, homo_image_copy)
+    # Convert the above into HSV color space for yellow color detection
+    hsv = cv2.cvtColor(homo_image_copy, cv2.COLOR_BGR2HSV)
+    # Mask the yellow color alone from the HSV color space
+    mask1 = cv2.inRange(hsv, constants.yellow_lower, constants.yellow_upper)
+    # Mask the white color alone from the BGR color space
+    mask2 = cv2.inRange(homo_image, constants.white_lower, constants.white_upper)
+    corners_yellow = cv2.goodFeaturesToTrack(mask1, 300, 0.01, 0.05)
+    corners_white = cv2.goodFeaturesToTrack(mask2, 100, 0.01, 0.05)
 
+    xyellow = []  # Variable for storing the x-coordinates of the corners of the yellow color
+    yyellow = []  # Variable for storing the y-coordinates of the corners of the yellow color
+    xwhite = []  # Variable for storing the x-coordinates of the corners of the white color
+    ywhite = []  # Variable for storing the y-coordinates of the corners of the white color
+    # When corners are found
+    try:
+        for i in corners_white:  # Looping over the corners detected from the white color
+            x, y = i.ravel()  # Separating x and y coordinates
+            if x > 130:
+                # Append coordinates in the white list
+                xwhite.append(x)
+                ywhite.append(y)
 
-def get_line_coordinates(lines):
-    rho_left = []
-    rho_right = []
-    theta_left = []
-    theta_right = []
-    if lines is not None:
-        for line in lines:
-            for rho, theta in line:
-                if np.pi * 0.2 < theta < np.pi * 0.4:
-                    rho_left.append(rho)
-                    theta_left.append(theta)
-                elif np.pi * 0.6 < theta < np.pi * 0.8:
-                    rho_right.append(rho)
-                    theta_right.append(theta)
-    # Do not want the lines with maximum votes
-    left_rho = np.median(rho_left)
-    right_rho = np.median(rho_right)
-    left_theta = np.median(theta_left)
-    right_theta = np.median(theta_right)
-
-
-if __name__ == '__main__':
-    camera_matrix = np.array([[1.15422732e+03, 0.00000000e+00, 6.71627794e+02],
-                              [0.00000000e+00, 1.14818221e+03, 3.86046312e+02],
-                              [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
-    # [-3.639558e-01, 1.788651e-01, 6.029694e-04, -3.922424e-04, -5.382460e-02]
-    distortion_matrix = np.array([[-2.42565104e-01, -4.77893070e-02, -1.31388084e-03, -8.79107779e-05, 2.20573263e-02]])
-    lane_points = np.float32([[493, 300], [729, 300], [860, 480], [36, 480]])
-    height = 820
-    width = 640
-    final_points = np.float32([[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]])
-    # img_location = 'data_1/data/0000000221.png'
-    video = cv2.VideoCapture('data_2/challenge_video.mp4')
-    # print(img_location)
-    while True:
-        img_frame_exists, img_frame = video.read()
-        if not img_frame_exists:
-            break
-        # img_frame = cv2.imread(img_location)
-        img_width, img_height, img_channels = img_frame.shape
-        h_matrix, ret_val = cv2.findHomography(lane_points, final_points)
-        # warped_img = cv2.warpPerspective(img_frame, mask, (width, height))
-        # new_camera_matrix, _ = cv2.getOptimalNewCameraMatrix(camera_matrix, distortion_matrix,
-        #                                                      (img_width, img_height), 1, (img_width, img_height))
-        # x, y, w, h = roi
-        undistorted_img = cv2.undistort(img_frame, camera_matrix, distortion_matrix)  # , newCameraMatrix=new_camera_matrix)
-        denoised_img = cv2.fastNlMeansDenoisingColored(undistorted_img, None, 10, 10, 7, 21)
-        edges = cv2.Canny(denoised_img, 50, 150)
-        # edges = edges[155:425, 200:730]
-        roi_img = find_roi(edges)
-        hough_lines = cv2.HoughLines(roi_img, 2, np.pi / 180, 30)  # , np.array([]), maxLineGap=200, minLineLength=50)
-
-        hough_img = np.zeros((roi_img.shape[0], roi_img.shape[1], 3), dtype=np.uint8)
-        # for rho, theta in lines[0]:
-        #     a = np.cos(theta)
-        #     b = np.sin(theta)
-        #     x0 = a * rho
-        #     y0 = b * rho
-        #     x1 = int(x0 + 1000 * (-b))
-        #     y1 = int(y0 + 1000 * a)
-        #     x2 = int(x0 - 1000 * (-b))
-        #     y2 = int(y0 - 1000 * a)
-        #
-        #     cv2.line(hough_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
-        # hough_img = np.zeros((edges.shape[0], edges.shape[1]))
-        # for x1, y1, x2, y2 in lines[0]:
-        #     cv2.line(hough_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
-        #
-        final = cv2.addWeighted(img_frame, 0.8, hough_img, 1, 0)
-
-        cv2.imshow("Original", img_frame)
-        # cv2.imshow("Warp", warped_img)
-        cv2.imshow("Undistorted", undistorted_img)
-        cv2.imshow("Denoised", denoised_img)
-        cv2.imshow("Edges", edges)
-        cv2.imshow("ROI", roi_img)
-        # cv2.imshow("warp", hough_img)
-        # cv2.imshow("final", final)
-        # cv2.imshow("Undistorted", undistorted_if)
-        key = cv2.waitKey(0)
-        # if key == 27:
-        #     break
+        for i in corners_yellow:  # Looping over the corners detected from the yellow color
+            x, y = i.ravel()  # Separating x and y coordinates
+            if x < 70:
+                # Append coordinates in the yellow list
+                xyellow.append(x)
+                yyellow.append(y)
+    except:
+        # When no corners are found (few frames in the challenge video)
+        xyellow = temp_x_yellow[:]  # Using last frame's x-coordiante data
+        yyellow = temp_y_yellow[:]  # Using last frame's y-coordinate data
+        xwhite = temp_x_white[:]  # Using last frame's x-coordiante data
+        ywhite = temp_y_white[:]  # Using last frame's y-coordinate data
+    # Poly-fit a line in corners corresponding to the yellow lane
+    zyellow = np.polyfit(yyellow, xyellow, 1)
+    # Equation of the line polyfitted in the yellow lane
+    fyellow = np.poly1d(zyellow)
+    # Poly-fit a line in corners corresponding to the white lane
+    zwhite = np.polyfit(ywhite, xwhite, 1)
+    # Equation of the line polyfitted in the white lane
+    fwhite = np.poly1d(zwhite)
+    # Take two x-coordiante for plotting the yellow line
+    yplotyellow = np.array([20, 197])
+    # Calculate the corresponding y-coordiante for plotting the yellow line
+    xplotyellow = fyellow(yplotyellow)
+    # Take two x-coordiante for plotting the white line
+    yplotwhite = np.array([20, constants.warp_size[1]])
+    # Calculate the corresponding y-coordiante for plotting the white line
+    xplotwhite = fwhite(yplotwhite)
+    # Calculate length from the middle of the frame for determining turning
+    length1 = int(xplotyellow[0] + (xplotwhite[0] - xplotyellow[0]) / 2)
+    # Calculate the point 1 at yellow lane in the camera frame using inverse homography
+    x1, y1, z1 = np.matmul(Hinv, [xplotyellow[0], yplotyellow[0], 1])
+    # Calculate the point 2 at yellow lane the camera frame using inverse homography
+    x2, y2, z2 = np.matmul(Hinv, [xplotyellow[1], yplotyellow[1], 1])
+    # Calculate the point 1 at white lane in the camera frame using inverse homography
+    x3, y3, z3 = np.matmul(Hinv, [xplotwhite[0], yplotwhite[0], 1])
+    # Calculate the point 2 at white lane in the camera frame using inverse homography
+    x4, y4, z4 = np.matmul(Hinv, [xplotwhite[1], yplotwhite[1], 1])
+    x5, y5, z5 = np.matmul(Hinv, [85, 150, 1])
+    # Draw line at yellow line
+    cv2.line(undistort, (int(x1 / z1), int(y1 / z1)), (int(x2 / z2), int(y2 / z2)), (0, 0, 255), 12)
+    # Draw line at white line
+    cv2.line(undistort, (int(x3 / z3), int(y3 / z3)), (int(x4 / z4), int(y4 / z4)), (0, 0, 255), 12)
+    points = np.array([[(int(x1 / z1), int(y1 / z1)), (int(x2 / z2), int(y2 / z2)), (int(x4 / z4), int(y4 / z4)),
+                     (int(x3 / z3), int(y3 / z3))]], np.int32)
+    # Fill the polygon with the green color
+    cv2.fillPoly(undistort, points, (128, 255, 128))
+    # Check for direction of turning
+    if length1 < 93:
+        constants.turn_count['Turning Left'] += 1
+    elif length1 > 107:
+        constants.turn_count['Turning Right'] += 1
+    elif 95 < length1 < 107:
+        constants.turn_count['Straight'] += 1
+    # Get maximum of directions deduced over 8 frames to avoid noisy predictions
+    if constants.total_frames % 8 == 0:
+        direction = max(constants.turn_count, key=constants.turn_count.get)
+        constants.turn_count = constants.turn_count.fromkeys(constants.turn_count, 0)
+    # Display direction on output frame
+    cv2.putText(undistort, constants.direction, (int(x5 / z5), int(y5 / z5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0))
+    # Store previous corners
+    temp_x_yellow = xyellow[:]
+    temp_y_yellow = yyellow[:]
+    temp_x_white = xwhite[:]
+    temp_y_white = ywhite[:]
+    # Append final output to video file
+    video_output.write(undistort)
+video_output.release()
+cap.release()
+cv2.destroyAllWindows()
