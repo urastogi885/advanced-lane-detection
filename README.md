@@ -1,4 +1,4 @@
-# Lane Detection
+# Advanced Lane Detection
 
 ## Run Instructions
 
