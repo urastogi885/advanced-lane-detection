@@ -4,11 +4,13 @@ import cv2 as cv
 import copy
 
 vidname1 = 'data_1/data/*.png'  # Input challenge video file
-vidname2 = 'data_1/project_video.mp4'  # Input project video file
+images_video = 'data_1/data1_output.avi'  # Input project video file
+vidname2 = 'data_1/image_dataset_output.avi'
 
-# cap = cv.VideoCapture(vidname1)  # Reading the video file
-video_format = cv.VideoWriter_fourcc('M', 'P', '4', 'V')
-video_output = cv.VideoWriter(vidname2, video_format, 30.0, (1281, 372))
+
+video_format = cv.VideoWriter_fourcc('X', 'V', 'I', 'D')
+video_input = cv.VideoWriter(images_video, video_format, 10.0, (1392, 512))
+video_output = cv.VideoWriter(vidname2, video_format, 10.0, (1281, 372))
 
 # Calibration Matrix
 calibration_matrix = np.array(
@@ -39,46 +41,42 @@ total_frames = 0
 direction = ''
 turn_count = {'Straight': 0, 'Turning Left': 0, 'Turning Right': 0}
 
+# images_array = []
 for file in glob(vidname1):
     frame = cv.imread(file)
+    # print(frame.shape)
+    video_input.write(frame)
+video_input.release()
+
+cap = cv.VideoCapture(images_video)  # Reading the video file
+while True:
+    ret, video_frame = cap.read()
+    # If no video frame is generated or the video has ended
+    if not ret:
+        print('break')
+        break
     total_frames += 1
-    h, w, _ = frame.shape  # Getting height and width of the frame
+    h, w, _ = video_frame.shape  # Getting height and width of the frame
     # Refining camera calibration parameters for undistortion
     newcameramtx, roi = cv.getOptimalNewCameraMatrix(calibration_matrix, distortion, (w, h), 1, (w, h))
-    dst = cv.undistort(frame, calibration_matrix, distortion, None, newcameramtx)  # Undistorting the image
+    dst = cv.undistort(video_frame, calibration_matrix, distortion, None, newcameramtx)  # Undistorting the image
     x, y, w, h = roi  # parameters for reconverting the undistort frame into normal sqauare frame
     undistort = dst[y:y + h, x:x + w]  # Undistorted frame
     undistort_copy = undistort.copy()
     undistort = cv.fastNlMeansDenoisingColored(undistort, None, 10, 10, 7, 21)
     # Four corners points in the camera frame for homography
-    src = np.float32([[int((w / 4) + 100), int((h / 2) + 100)], [int((w / 2) + 70), int((h / 2) + 100)],
-                      [int((w / 2) + 140), h], [int((w / 4) - 40), h]])
+    src = np.float32([[int((w / 4) + 80), int((h / 2) + 100)], [int((w / 2) + 100), int((h / 2) + 100)],
+                      [int((w / 2) + 180), h], [int((w / 4) - 80), h]])
     # Four corners points in the world frame for homography
     snk = np.array([[0, 0], [200, 0], [200, 200], [0, 200]], np.float32)
     # Homography matrix using the above four points in camera frame and world frame.
-    H = cv.getPerspectiveTransform(src,
-                                   snk)
-
+    H = cv.getPerspectiveTransform(src, snk)
     Hinv = np.linalg.inv(H)  # Getting Inverse of the homography matrix
-    homoimage = cv.warpPerspective(undistort, H, (
-    200, 200))  # Using wrap Perspective to get the required area of interest in front of us
-    homoimagecopy = copy.deepcopy(homoimage)  # Making a copy of the image recieved through homography
-    # Increasing the brightness of the homographied image for white
-    cv.multiply(homoimagecopy, array_alpha, homoimage)
-    cv.add(homoimagecopy, array_beta, homoimagecopy)  # Increasing the contrast of the homographied image for yellow
-    cv.multiply(homoimagecopy, array_alpha,
-                homoimagecopy)  # Increasing the brightness of the homographied image some more for yellow
-
-    # hsv = cv.cvtColor(homoimagecopy,
-    #                   cv.COLOR_BGR2HSV)  # Converting the above into HSV color space for yellow color detection
-    # mask1 = cv.inRange(hsv, lower_yellow, upper_yellow)  # Masking the yellow color alone from the HSV color space
+    # Using wrap Perspective to get the required area of interest in front of us
+    homoimage = cv.warpPerspective(undistort, H, (200, 200))
     mask2 = cv.inRange(homoimage, lower_white, upper_white)  # Masking the white color alone from the BGR color space
-
-    # cornerswhite1 = cv.goodFeaturesToTrack(mask1, 100, 0.01,
-    #                                        0.05)  # Finding corners using Shi-Tomasi method in the mask of the yellow color
-    cornerswhite2 = cv.goodFeaturesToTrack(mask2, 100, 0.01,
-                                          0.05)  # Finding corners using Shi-Tomasi method in the mask of the white color
-
+    # Finding corners using Shi-Tomasi method in the mask of the white color
+    cornerswhite2 = cv.goodFeaturesToTrack(mask2, 100, 0.01, 0.05)
     xyellow = []  # Variable for storing the x-coordinates of the corners of the yellow color
     yyellow = []  # Variable for storing the y-coordinates of the corners of the yellow color
     xwhite = []  # Variable for storing the x-coordinates of the corners of the white color
@@ -87,20 +85,22 @@ for file in glob(vidname1):
     try:  # When corners are found
         for i in cornerswhite2:  # Looping over the corners detected from the white color
             x, y = i.ravel()  # Separating x and y coordinates
-            if x > 180:
+            if x > 170:
                 xwhite.append(x)  # Appending x coordiante in the xwhite list
                 ywhite.append(y)  # Appending y coordiante in the xwhite list
-
-        for i in cornerswhite2:  # Looping over the corners detected from the yellow color
-            x, y = i.ravel()  # Separating x and y coordinates
-            if x < 30:
+            if x < 40:
                 xyellow.append(x)  # Appending x coordiante in the xyellow list
                 yyellow.append(y)  # Appending y coordiante in the yyellow list
     except:  # When no corners are found (few frames in the challenge video)
-        xyellow = tempxyellow[:]  # Using last frame's x-coordiante data
-        yyellow = tempyyellow[:]  # Using last frame's y-coordinate data
-        xwhite = tempxwhite[:]  # Using last frame's x-coordiante data
-        ywhite = tempywhite[:]  # Using last frame's y-coordinate data
+        xyellow = copy.deepcopy(tempxyellow)  # Using last frame's x-coordiante data
+        yyellow = copy.deepcopy(tempyyellow)  # Using last frame's y-coordinate data
+        xwhite = copy.deepcopy(tempxwhite)  # Using last frame's x-coordiante data
+        ywhite = copy.deepcopy(tempywhite)  # Using last frame's y-coordinate data
+    if len(xyellow) == 0 or len(yyellow) == 0 or len(xwhite) == 0 or len(ywhite) == 0:
+        xyellow = copy.deepcopy(tempxyellow)  # Using last frame's x-coordiante data
+        yyellow = copy.deepcopy(tempyyellow)  # Using last frame's y-coordinate data
+        xwhite = copy.deepcopy(tempxwhite)  # Using last frame's x-coordiante data
+        ywhite = copy.deepcopy(tempywhite)  # Using last frame's y-coordinate data
 
     zyellow = np.polyfit(yyellow, xyellow, 1)  # Polyfitting a line in corners corresponding to the yellow lane
     fyellow = np.poly1d(zyellow)  # Equation of the line polyfitted in the yellow lane
@@ -108,7 +108,7 @@ for file in glob(vidname1):
     zwhite = np.polyfit(ywhite, xwhite, 1)  # Polyfitting a line in corners corresponding to the white lane
     fwhite = np.poly1d(zwhite)  # Equation of the line polyfitted in the white lane
 
-    yplotyellow = np.array([20, 197])  # Taking two x-coordiante for plotting the yellow line
+    yplotyellow = np.array([20, 200])  # Taking two x-coordiante for plotting the yellow line
     xplotyellow = fyellow(yplotyellow)  # Calculating the corresponding y-coordiante for plotting the yellow line
 
     yplotwhite = np.array([20, 200])  # Taking two x-coordiante for plotting the white line
@@ -148,19 +148,18 @@ for file in glob(vidname1):
 
     cv.putText(undistort, direction, (int(x5 / z5), int(y5 / z5)), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0))
 
-    tempxyellow = xyellow[:]  # Storing current frame x-coordiantes for yellow color
-    tempyyellow = yyellow[:]  # Storing current frame y-coordiantes for yellow color
-    tempxwhite = xwhite[:]  # Storing current frame x-coordiantes for white color
-    tempywhite = ywhite[:]  # Storing current frame y-coordiantes for white color
+    tempxyellow = copy.deepcopy(xyellow)  # Storing current frame x-coordiantes for yellow color
+    tempyyellow = copy.deepcopy(yyellow)  # Storing current frame y-coordiantes for yellow color
+    tempxwhite = copy.deepcopy(xwhite)  # Storing current frame x-coordiantes for white color
+    tempywhite = copy.deepcopy(ywhite)  # Storing current frame y-coordiantes for white color
 
     cv.imshow("Lane_Detection", undistort)  # Output of the detected lanes in the input video
-    # cv.imshow("Homo", homoimage)  # Output of the detected lanes in the input video
-    # cv.waitKey(0)
-    if cv.waitKey(1) == 27:  # Press 'ESC' to stop the processing and break out of the loop
-        # cv.destroyAllWindows()  # Destroys all window after pressing 'ESC'
-        # cap.release()  # Releases software/hardware resource
+    cv.imshow("Homo", homoimage)  # Output of the detected lanes in the input video
+    key = cv.waitKey(1)
+    if key == 27:
         break
-    # video_output.write(undistort)
+    video_output.write(undistort)
+    # print(undistort.shape)
 video_output.release()
 cv.destroyAllWindows()
 # end
