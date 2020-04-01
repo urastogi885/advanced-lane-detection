@@ -4,13 +4,13 @@ import cv2 as cv
 import copy
 
 vidname1 = 'data_1/data/*.png'  # Input challenge video file
-images_video = 'data_1/data1_output.avi'  # Input project video file
-vidname2 = 'data_1/image_dataset_output.avi'
+images_video = 'data_1/data1_input.avi'  # Input project video file
+vidname2 = 'data_1/data1_output.avi'
 
 
 video_format = cv.VideoWriter_fourcc('X', 'V', 'I', 'D')
-video_input = cv.VideoWriter(images_video, video_format, 10.0, (1392, 512))
-video_output = cv.VideoWriter(vidname2, video_format, 10.0, (1281, 372))
+video_input = cv.VideoWriter(images_video, video_format, 5.0, (1392, 512))
+video_output = cv.VideoWriter(vidname2, video_format, 5.0, (1281, 372))
 
 # Calibration Matrix
 calibration_matrix = np.array(
@@ -41,10 +41,12 @@ total_frames = 0
 direction = ''
 turn_count = {'Straight': 0, 'Turning Left': 0, 'Turning Right': 0}
 
-# images_array = []
+images_array = []
 for file in glob(vidname1):
-    frame = cv.imread(file)
-    # print(frame.shape)
+    images_array.append(file)
+images_array.sort()
+for img in images_array:
+    frame = cv.imread(img)
     video_input.write(frame)
 video_input.release()
 
@@ -53,7 +55,6 @@ while True:
     ret, video_frame = cap.read()
     # If no video frame is generated or the video has ended
     if not ret:
-        print('break')
         break
     total_frames += 1
     h, w, _ = video_frame.shape  # Getting height and width of the frame
@@ -96,6 +97,7 @@ while True:
         yyellow = copy.deepcopy(tempyyellow)  # Using last frame's y-coordinate data
         xwhite = copy.deepcopy(tempxwhite)  # Using last frame's x-coordiante data
         ywhite = copy.deepcopy(tempywhite)  # Using last frame's y-coordinate data
+
     if len(xyellow) == 0 or len(yyellow) == 0 or len(xwhite) == 0 or len(ywhite) == 0:
         xyellow = copy.deepcopy(tempxyellow)  # Using last frame's x-coordiante data
         yyellow = copy.deepcopy(tempyyellow)  # Using last frame's y-coordinate data
@@ -115,16 +117,14 @@ while True:
     xplotwhite = fwhite(yplotwhite)  # Calculating the corresponding y-coordiante for plotting the white line
     # Calculating length from the middle of the frame for determining turning
     length1 = int(xplotyellow[0] + (xplotwhite[0] - xplotyellow[0]) / 2)
-
-    x1, y1, z1 = np.matmul(Hinv, [xplotyellow[0], yplotyellow[0],
-                                  1])  # Calculating the point 1 at yellow lane in the camera frame using inverse homography
-    x2, y2, z2 = np.matmul(Hinv, [xplotyellow[1], yplotyellow[1],
-                                  1])  # Calculating the point 2 at yellow lane the camera frame using inverse homography
-
-    x3, y3, z3 = np.matmul(Hinv, [xplotwhite[0], yplotwhite[0],
-                                  1])  # Calculating the point 1 at white lane in the camera frame using inverse homography
-    x4, y4, z4 = np.matmul(Hinv, [xplotwhite[1], yplotwhite[1],
-                                  1])  # Calculating the point 2 at white lane in the camera frame using inverse homography
+    # Calculating the point 1 at yellow lane in the camera frame using inverse homography
+    x1, y1, z1 = np.matmul(Hinv, [xplotyellow[0], yplotyellow[0], 1])
+    # Calculating the point 2 at yellow lane the camera frame using inverse homography
+    x2, y2, z2 = np.matmul(Hinv, [xplotyellow[1], yplotyellow[1], 1])
+    # Calculating the point 1 at white lane in the camera frame using inverse homography
+    x3, y3, z3 = np.matmul(Hinv, [xplotwhite[0], yplotwhite[0], 1])
+    # Calculating the point 2 at white lane in the camera frame using inverse homography
+    x4, y4, z4 = np.matmul(Hinv, [xplotwhite[1], yplotwhite[1], 1])
     x5, y5, z5 = np.matmul(Hinv, [85, 150, 1])
 
     cv.line(undistort, (int(x1 / z1), int(y1 / z1)), (int(x2 / z2), int(y2 / z2)), (0, 0, 255),
@@ -148,18 +148,12 @@ while True:
 
     cv.putText(undistort, direction, (int(x5 / z5), int(y5 / z5)), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0))
 
-    tempxyellow = copy.deepcopy(xyellow)  # Storing current frame x-coordiantes for yellow color
-    tempyyellow = copy.deepcopy(yyellow)  # Storing current frame y-coordiantes for yellow color
-    tempxwhite = copy.deepcopy(xwhite)  # Storing current frame x-coordiantes for white color
-    tempywhite = copy.deepcopy(ywhite)  # Storing current frame y-coordiantes for white color
+    tempxyellow = copy.deepcopy(xyellow)  # Storing current frame x-coordinates for yellow color
+    tempyyellow = copy.deepcopy(yyellow)  # Storing current frame y-coordinates for yellow color
+    tempxwhite = copy.deepcopy(xwhite)  # Storing current frame x-coordinates for white color
+    tempywhite = copy.deepcopy(ywhite)  # Storing current frame y-coordinates for white color
 
-    cv.imshow("Lane_Detection", undistort)  # Output of the detected lanes in the input video
-    cv.imshow("Homo", homoimage)  # Output of the detected lanes in the input video
-    key = cv.waitKey(1)
-    if key == 27:
-        break
     video_output.write(undistort)
-    # print(undistort.shape)
 video_output.release()
 cv.destroyAllWindows()
 # end
